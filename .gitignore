@@ -1,0 +1,18 @@
+.gradle/
+build/
+/app/build/
+local.properties
+*.iml
+.idea/
+.DS_Store
+captures/
+.externalNativeBuild/
+.cxx/
+*.jks
+*.keystore
+keystore.properties
+
+# Supabase
+supabase/.temp/
+supabase/.branches/
+supabase/functions/.env
