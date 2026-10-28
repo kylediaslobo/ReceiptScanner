@@ -162,17 +162,18 @@ private fun CameraView(capturesDir: File, onCaptured: (File) -> Unit) {
             Box(contentAlignment = Alignment.Center) {
                 IconButton(
                     onClick = {
-                        if (busy) return@IconButton
-                        busy = true
-                        error = null
-                        scope.launch {
-                            try {
-                                val file = takePhoto(controller, context.mainExecutorCompat(), capturesDir)
-                                onCaptured(file)
-                            } catch (e: Exception) {
-                                error = "Couldn't take the photo. Try again."
-                            } finally {
-                                busy = false
+                        if (!busy) {
+                            busy = true
+                            error = null
+                            scope.launch {
+                                try {
+                                    val file = takePhoto(controller, context.mainExecutorCompat(), capturesDir)
+                                    onCaptured(file)
+                                } catch (e: Exception) {
+                                    error = "Couldn't take the photo. Try again."
+                                } finally {
+                                    busy = false
+                                }
                             }
                         }
                     },

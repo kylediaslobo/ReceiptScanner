@@ -24,10 +24,7 @@ class ReceiptApp : Application() {
 
 /** App-wide singletons. Small enough that a DI framework isn't worth it. */
 class AppContainer(app: Application) {
-    val json = Json {
-        ignoreUnknownKeys = true
-        explicitNulls = false
-    }
+    val json = Json { ignoreUnknownKeys = true }
 
     val supabase: SupabaseClient = createSupabaseClient(
         supabaseUrl = BuildConfig.SUPABASE_URL,
