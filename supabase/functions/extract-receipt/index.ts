@@ -10,64 +10,23 @@ const anthropic = new Anthropic();
 
 const nullable = (schema: Record<string, unknown>) => ({ anyOf: [schema, { type: "null" }] });
 
-// Field names match the receipts / receipt_items columns, so the app can pass them straight to save_receipt.
+// Field names match the receipts columns. Only the date and amount come off the receipt; the app
+// asks for the nature of expense and company, and fills in the claimant's name.
 const RECEIPT_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: [
-    "merchant_name", "merchant_address", "purchase_date", "purchase_time", "currency",
-    "subtotal", "tax", "tip", "total", "payment_method", "items", "extra",
-  ],
+  required: ["expense_date", "amount"],
   properties: {
-    merchant_name: nullable({ type: "string" }),
-    merchant_address: nullable({ type: "string" }),
-    purchase_date: nullable({ type: "string", format: "date" }),
-    purchase_time: nullable({ type: "string", description: "24-hour time, HH:MM" }),
-    currency: nullable({ type: "string", description: "ISO 4217 code, e.g. EUR, USD, GBP" }),
-    subtotal: nullable({ type: "number" }),
-    tax: nullable({ type: "number" }),
-    tip: nullable({ type: "number" }),
-    total: nullable({ type: "number" }),
-    payment_method: nullable({ type: "string" }),
-    items: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["description", "quantity", "unit_price", "amount"],
-        properties: {
-          description: { type: "string" },
-          quantity: nullable({ type: "number" }),
-          unit_price: nullable({ type: "number" }),
-          amount: nullable({ type: "number" }),
-        },
-      },
-    },
-    extra: {
-      type: "array",
-      description: "Other useful printed details, e.g. table number, server, receipt number",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["label", "value"],
-        properties: {
-          label: { type: "string" },
-          value: { type: "string" },
-        },
-      },
-    },
+    expense_date: nullable({ type: "string", format: "date" }),
+    amount: nullable({ type: "number" }),
   },
 };
 
-const SYSTEM_PROMPT = `You extract data from photos of shop and restaurant receipts.
+const SYSTEM_PROMPT = `You read the date and the amount paid from photos of receipts and card slips, for a South African expense claim.
 
-Copy values as printed. Use null for anything that isn't on the receipt; don't guess or calculate missing totals.
-- items: one entry per purchased line, in printed order. Don't include subtotal, tax, tip or total lines as items. Discounts are items with a negative amount.
-- currency: work it out from the symbol and the merchant's address or country (a bare "$" in Canada is CAD).
-- purchase_date: read ambiguous dates like 03/04 using the merchant's country convention.
-- extra: short label/value pairs for other details worth keeping. Leave it empty if there are none.`;
-
-type ExtraField = { label: string; value: string };
+- expense_date: the date of the purchase. Receipts here usually print the day first, so 03/04/2026 is 3 April 2026.
+- amount: the final amount paid in Rand, including a tip if one is printed or written on the slip. Use the grand total, not a subtotal or the VAT line.
+Use null for a value you can't read. Don't guess.`;
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
@@ -94,7 +53,7 @@ Deno.serve(async (req) => {
   try {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 1000,
       system: SYSTEM_PROMPT,
       output_config: {
         effort: "low",
@@ -115,18 +74,14 @@ Deno.serve(async (req) => {
       return json({ error: "This receipt couldn't be read. Enter the details by hand." }, 422);
     }
     if (response.stop_reason === "max_tokens") {
-      return json({ error: "This receipt was too long to read in one go." }, 502);
+      return json({ error: "Extraction failed. Try again." }, 502);
     }
 
     const textBlock = response.content.find((b): b is Anthropic.TextBlock => b.type === "text");
     if (!textBlock) return json({ error: "No result from extraction" }, 502);
 
     const parsed = JSON.parse(textBlock.text);
-
-    // extra comes back as [{label, value}]; the receipts.extra column stores a plain object.
-    const extra = Object.fromEntries((parsed.extra as ExtraField[]).map((e) => [e.label, e.value]));
-
-    return json({ ...parsed, extra, image_path: imagePath });
+    return json({ expense_date: parsed.expense_date, amount: parsed.amount, image_path: imagePath });
   } catch (err) {
     if (err instanceof Anthropic.RateLimitError) {
       return json({ error: "Too many scans at once. Try again in a minute." }, 429);

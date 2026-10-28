@@ -2,121 +2,62 @@ package com.kyled.receiptscanner.data
 
 import java.math.BigDecimal
 import java.time.LocalDate
-import java.time.LocalTime
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
-import kotlinx.serialization.json.JsonElement
+import java.util.Locale
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.contentOrNull
 
 /**
- * The editable state of a receipt on the review screen. Every field is a String so the user can
+ * The editable state of a receipt on the review screen. Text fields stay Strings so the user can
  * type freely; [validate] and [toSaveParams] convert back to typed values.
  */
 data class ReceiptDraft(
     val id: String? = null,
-    val title: String = "",
-    val merchantName: String = "",
-    val merchantAddress: String = "",
+    /** ISO date, yyyy-MM-dd. Blank until read from the receipt or picked. */
     val date: String = "",
-    val time: String = "",
-    val currency: String = "",
-    val subtotal: String = "",
-    val tax: String = "",
-    val tip: String = "",
-    val total: String = "",
-    val paymentMethod: String = "",
-    val lines: List<DraftLine> = emptyList(),
-    val extras: List<DraftExtra> = emptyList(),
+    val natureOfExpense: String = "",
+    val company: String = "",
+    val names: String = "",
+    val amount: String = "",
     val imagePath: String? = null,
 )
 
-data class DraftLine(
-    val key: Long = nextKey(),
-    val description: String = "",
-    val quantity: String = "1",
-    val unitPrice: String = "",
-    val amount: String = "",
-)
-
-data class DraftExtra(
-    val key: Long = nextKey(),
-    val label: String = "",
-    val value: String = "",
-)
-
-private var keyCounter = 0L
-private fun nextKey(): Long = ++keyCounter
-
-fun ExtractedReceipt.toDraft(): ReceiptDraft = ReceiptDraft(
-    merchantName = merchantName.orEmpty(),
-    merchantAddress = merchantAddress.orEmpty(),
-    date = purchaseDate.orEmpty(),
-    time = purchaseTime?.take(5).orEmpty(),
-    currency = currency.orEmpty(),
-    subtotal = subtotal.toMoneyText(),
-    tax = tax.toMoneyText(),
-    tip = tip.toMoneyText(),
-    total = total.toMoneyText(),
-    paymentMethod = paymentMethod.orEmpty(),
-    lines = items.map { it.toDraftLine() },
-    extras = extra.toDraftExtras(),
+/** [names] is the claimant's default for the Names column; receipts don't print it. */
+fun ExtractedReceipt.toDraft(names: String): ReceiptDraft = ReceiptDraft(
+    date = expenseDate?.toLocalDateOrNull()?.toString().orEmpty(),
+    names = names,
+    amount = amount.toMoneyText(),
     imagePath = imagePath,
 )
 
 fun Receipt.toDraft(): ReceiptDraft = ReceiptDraft(
     id = id,
-    title = title,
-    merchantName = merchantName.orEmpty(),
-    merchantAddress = merchantAddress.orEmpty(),
-    date = purchaseDate.orEmpty(),
-    time = purchaseTime?.take(5).orEmpty(),
-    currency = currency.orEmpty(),
-    subtotal = subtotal.toMoneyText(),
-    tax = tax.toMoneyText(),
-    tip = tip.toMoneyText(),
-    total = total.toMoneyText(),
-    paymentMethod = paymentMethod.orEmpty(),
-    lines = items.sortedBy { it.lineNo }.map { it.toDraftLine() },
-    extras = extra.toDraftExtras(),
+    date = expenseDate,
+    natureOfExpense = natureOfExpense,
+    company = company,
+    names = names,
+    amount = amount.toMoneyText(),
     imagePath = imagePath,
 )
 
-private fun ReceiptItem.toDraftLine() = DraftLine(
-    description = description,
-    quantity = quantity?.let { BigDecimal.valueOf(it).stripTrailingZeros().toPlainString() } ?: "1",
-    unitPrice = unitPrice.toMoneyText(),
-    amount = amount.toMoneyText(),
-)
-
-private fun JsonObject.toDraftExtras(): List<DraftExtra> = map { (label, value) ->
-    DraftExtra(label = label, value = (value as? JsonPrimitive)?.contentOrNull ?: value.toString())
-}
-
-fun Double?.toMoneyText(): String = this?.let { "%.2f".format(java.util.Locale.ROOT, it) }.orEmpty()
+fun Double?.toMoneyText(): String = this?.let { "%.2f".format(Locale.ROOT, it) }.orEmpty()
 
 /** Returns a message describing the first problem, or null if the draft can be saved. */
 fun ReceiptDraft.validate(): String? {
-    if (title.isBlank()) return "Add a title before saving"
-    if (title.length > 200) return "Keep the title under 200 characters"
-    if (date.isNotBlank() && date.trim().toLocalDateOrNull() == null) return "Date must look like 2026-10-27"
-    if (time.isNotBlank() && time.trim().toLocalTimeOrNull() == null) return "Time must look like 13:45"
-    if (currency.isNotBlank() && !currency.trim().uppercase().matches(Regex("[A-Z]{3}"))) {
-        return "Currency must be a 3-letter code like EUR"
-    }
-    val money = listOf("Subtotal" to subtotal, "Tax" to tax, "Tip" to tip, "Total" to total)
-    money.firstOrNull { (_, v) -> v.isNotBlank() && v.toDecimalOrNull() == null }?.let { (name, _) ->
-        return "$name isn't a number"
-    }
-    lines.forEachIndexed { i, line ->
-        if (line.description.isBlank()) return "Line ${i + 1} needs a description"
-        if (listOf(line.quantity, line.unitPrice, line.amount).any { it.isNotBlank() && it.toDecimalOrNull() == null }) {
-            return "Line ${i + 1} has a value that isn't a number"
-        }
-    }
+    if (date.isBlank()) return "Pick the date"
+    if (date.toLocalDateOrNull() == null) return "That date isn't valid"
+    if (natureOfExpense.isBlank()) return "Add the nature of expense"
+    if (company.isBlank()) return "Add the company"
+    if (names.isBlank()) return "Add the names"
+    if (amount.isBlank()) return "Add the amount"
+    if (amount.toDecimalOrNull() == null) return "The amount isn't a number"
+    listOf("Nature of expense" to natureOfExpense, "Company" to company, "Names" to names)
+        .firstOrNull { (_, v) -> v.trim().length > 200 }
+        ?.let { (name, _) -> return "$name is too long" }
     return null
 }
 
@@ -124,48 +65,46 @@ fun ReceiptDraft.validate(): String? {
 fun ReceiptDraft.toSaveParams(): JsonObject = buildJsonObject {
     put("p_receipt", buildJsonObject {
         if (id != null) put("id", JsonPrimitive(id))
-        put("title", JsonPrimitive(title.trim()))
-        put("merchant_name", merchantName.textOrNull())
-        put("merchant_address", merchantAddress.textOrNull())
-        put("purchase_date", date.trim().toLocalDateOrNull()?.let { JsonPrimitive(it.toString()) } ?: JsonNull)
-        put("purchase_time", time.trim().toLocalTimeOrNull()?.let { JsonPrimitive(it.toString()) } ?: JsonNull)
-        put("currency", currency.trim().uppercase().textOrNull())
-        put("subtotal", subtotal.decimalOrNull())
-        put("tax", tax.decimalOrNull())
-        put("tip", tip.decimalOrNull())
-        put("total", total.decimalOrNull())
-        put("payment_method", paymentMethod.textOrNull())
-        put("extra", buildJsonObject {
-            extras.filter { it.label.isNotBlank() }.forEach { put(it.label.trim(), JsonPrimitive(it.value.trim())) }
-        })
+        put("expense_date", JsonPrimitive(date.trim()))
+        put("nature_of_expense", JsonPrimitive(natureOfExpense.trim()))
+        put("company", JsonPrimitive(company.trim()))
+        put("names", JsonPrimitive(names.trim()))
+        put("amount", JsonPrimitive(amount.toDecimalOrNull()))
         put("image_path", imagePath?.let { JsonPrimitive(it) } ?: JsonNull)
     })
-    put("p_items", buildJsonArray {
-        lines.forEach { line ->
-            add(buildJsonObject {
-                put("description", JsonPrimitive(line.description.trim()))
-                put("quantity", line.quantity.decimalOrNull().takeUnless { it is JsonNull } ?: JsonPrimitive(1))
-                put("unit_price", line.unitPrice.decimalOrNull())
-                put("amount", line.amount.decimalOrNull())
-            })
-        }
-    })
 }
 
-fun String.toDecimalOrNull(): BigDecimal? = trim().replace(',', '.').toBigDecimalOrNull()
-
-private fun String.decimalOrNull(): JsonElement = toDecimalOrNull()?.let { JsonPrimitive(it) } ?: JsonNull
-private fun String.textOrNull(): JsonElement = trim().takeIf { it.isNotEmpty() }?.let { JsonPrimitive(it) } ?: JsonNull
-
-private fun String.toLocalDateOrNull(): LocalDate? =
-    try { LocalDate.parse(this) } catch (e: DateTimeParseException) { null }
-
-private fun String.toLocalTimeOrNull(): LocalTime? =
-    try { LocalTime.parse(this) } catch (e: DateTimeParseException) { null }
-
-/** Sum of the line amounts, for the "lines add up to" hint on the review screen. */
-fun ReceiptDraft.linesTotal(): BigDecimal? {
-    val amounts = lines.mapNotNull { it.amount.toDecimalOrNull() }
-    return if (amounts.isEmpty()) null else amounts.fold(BigDecimal.ZERO, BigDecimal::add)
+/** Accepts "1100", "R 1 100.50", "1,100.50", "1,100" and "1100,50". */
+fun String.toDecimalOrNull(): BigDecimal? {
+    val compact = trim().removePrefix("R").replace(" ", "").replace(" ", "")
+    val normalised = when {
+        compact.contains('.') -> compact.replace(",", "")
+        // A comma followed by 1 or 2 digits at the end is a decimal comma; otherwise it groups thousands.
+        Regex(",\\d{1,2}$").containsMatchIn(compact) && compact.count { it == ',' } == 1 -> compact.replace(',', '.')
+        else -> compact.replace(",", "")
+    }
+    return normalised.toBigDecimalOrNull()
 }
 
+fun String.toLocalDateOrNull(): LocalDate? =
+    try { LocalDate.parse(trim()) } catch (e: DateTimeParseException) { null }
+
+private val RAND = java.text.DecimalFormat("#,##0.00", java.text.DecimalFormatSymbols(Locale.US))
+
+/** "R 1,100.00", like the claim form's Amount column. */
+fun formatRand(amount: BigDecimal): String = "R " + RAND.format(amount)
+
+fun formatRand(amount: Double): String = formatRand(BigDecimal.valueOf(amount))
+
+private val DAY = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.UK)
+private val MONTH = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.UK)
+
+/** "27 Oct 2026", or the raw text if it isn't a date. */
+fun formatDay(isoDate: String): String = isoDate.toLocalDateOrNull()?.format(DAY) ?: isoDate
+
+/** "October 2026". */
+fun YearMonth.label(): String = format(MONTH)
+
+val Receipt.month: YearMonth get() = YearMonth.from(LocalDate.parse(expenseDate))
+
+fun List<Receipt>.total(): BigDecimal = fold(BigDecimal.ZERO) { sum, r -> sum + BigDecimal.valueOf(r.amount) }

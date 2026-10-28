@@ -70,7 +70,7 @@ jobs:
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: gradle --no-daemon assembleRelease
+        run: gradle --no-daemon testReleaseUnitTest assembleRelease
 
       - name: Rename APK
         run: |
@@ -81,6 +81,12 @@ jobs:
         with:
           name: ReceiptScanner-${{ env.VERSION_NAME }}
           path: ReceiptScanner.apk
+
+      # A claim form written by the unit tests, for checking the Excel layout without a phone.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sample-claim-form
+          path: app/build/sample-claim-form.xlsx
 
       - name: Publish release
         if: startsWith(github.ref, 'refs/tags/v')

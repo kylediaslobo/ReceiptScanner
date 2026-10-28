@@ -2,6 +2,7 @@ package com.kyled.receiptscanner
 
 import android.app.Application
 import com.kyled.receiptscanner.data.AuthRepository
+import com.kyled.receiptscanner.data.ProfileStore
 import com.kyled.receiptscanner.data.ReceiptRepository
 import io.github.jan.supabase.SupabaseClient
 import io.github.jan.supabase.auth.Auth
@@ -39,4 +40,5 @@ class AppContainer(app: Application) {
 
     val authRepository = AuthRepository(supabase)
     val receiptRepository = ReceiptRepository(supabase, json, app.cacheDir)
+    val profile = ProfileStore(app)
 }

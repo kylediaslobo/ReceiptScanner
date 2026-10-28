@@ -26,7 +26,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -42,9 +41,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.BackHandler
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
@@ -52,14 +49,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.kyled.receiptscanner.data.ProfileStore
 import com.kyled.receiptscanner.data.ReceiptDraft
 import com.kyled.receiptscanner.data.ReceiptRepository
+import com.kyled.receiptscanner.data.firstName
 import com.kyled.receiptscanner.data.toDraft
 import com.kyled.receiptscanner.data.toUserMessage
 import com.kyled.receiptscanner.data.validate
 import com.kyled.receiptscanner.ui.components.PaperReceipt
 import com.kyled.receiptscanner.ui.components.PhotoDialog
 import com.kyled.receiptscanner.ui.components.PhotoSource
+import com.kyled.receiptscanner.ui.components.Suggestions
 import com.kyled.receiptscanner.ui.container
 import com.kyled.receiptscanner.ui.theme.OnSaveGreen
 import com.kyled.receiptscanner.ui.theme.SaveGreen
@@ -81,6 +81,7 @@ data class ReviewUiState(
     val savedId: String? = null,
     val localPhoto: File? = null,
     val dirty: Boolean = false,
+    val suggestions: Suggestions = Suggestions(),
 )
 
 /**
@@ -91,17 +92,20 @@ data class ReviewUiState(
  */
 class ReviewViewModel(
     private val repo: ReceiptRepository,
+    profile: ProfileStore,
     savedState: SavedStateHandle,
 ) : ViewModel() {
     private val captureFile: File? = savedState.get<String>("file")?.let { File(repo.capturesDir, it) }
     private var imagePath: String? = savedState.get<String>("path")
     private val receiptId: String? = savedState.get<String>("id")
+    private val defaultNames: String = profile.fullName.value.firstName()
 
     private val _state = MutableStateFlow(ReviewUiState(isEdit = receiptId != null, localPhoto = captureFile))
     val state = _state.asStateFlow()
 
     init {
         load()
+        loadSuggestions()
     }
 
     fun retry() = load()
@@ -123,16 +127,31 @@ class ReviewViewModel(
                 val path = imagePath ?: error("No photo to read")
                 _state.update { it.copy(working = "Reading receipt…") }
                 val extracted = repo.extract(path)
-                _state.update { it.copy(working = null, draft = extracted.toDraft().copy(imagePath = path)) }
+                _state.update { it.copy(working = null, draft = extracted.toDraft(defaultNames).copy(imagePath = path)) }
             } catch (e: Exception) {
                 _state.update { it.copy(working = null, loadError = e.toUserMessage()) }
             }
         }
     }
 
+    /** Past values for the prompted fields, most used first, topped up with common ones. Best effort. */
+    private fun loadSuggestions() {
+        viewModelScope.launch {
+            val past = runCatching { repo.pastChoices() }.getOrDefault(emptyList())
+            _state.update {
+                it.copy(
+                    suggestions = Suggestions(
+                        natureOfExpense = rankByUse(past.map { c -> c.natureOfExpense } + COMMON_EXPENSES),
+                        company = rankByUse(past.map { c -> c.company }),
+                    ),
+                )
+            }
+        }
+    }
+
     /** Skip extraction and fill the receipt in by hand. Keeps the uploaded photo attached if there is one. */
     fun enterByHand() {
-        _state.update { it.copy(loadError = null, draft = ReceiptDraft(imagePath = imagePath)) }
+        _state.update { it.copy(loadError = null, draft = ReceiptDraft(names = defaultNames, imagePath = imagePath)) }
     }
 
     fun update(draft: ReceiptDraft) {
@@ -160,6 +179,16 @@ class ReviewViewModel(
             }
         }
     }
+
+    private companion object {
+        val COMMON_EXPENSES = listOf("Breakfast", "Lunch", "Supper", "Snack", "Airport Parking", "Accommodation")
+
+        /** Distinct values, the most frequent first; ties keep their original (newest-first) order. */
+        fun rankByUse(values: List<String>): List<String> {
+            val counts = values.map { it.trim() }.filter { it.isNotEmpty() }.groupingBy { it }.eachCount()
+            return counts.keys.sortedByDescending { counts.getValue(it) }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -168,7 +197,10 @@ fun ReviewScreen(
     onBack: () -> Unit,
     onSaved: (String) -> Unit,
 ) {
-    val vm: ReviewViewModel = viewModel { ReviewViewModel(container().receiptRepository, createSavedStateHandle()) }
+    val vm: ReviewViewModel = viewModel {
+        val c = container()
+        ReviewViewModel(c.receiptRepository, c.profile, createSavedStateHandle())
+    }
     val state by vm.state.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     var showPhoto by rememberSaveable { mutableStateOf(false) }
@@ -232,7 +264,7 @@ fun ReviewScreen(
                     onRetry = vm::retry,
                     onEnterByHand = vm::enterByHand,
                 )
-                else -> ReviewForm(draft = state.draft, onChange = vm::update)
+                else -> ReviewForm(draft = state.draft, suggestions = state.suggestions, onChange = vm::update)
             }
         }
     }
@@ -259,7 +291,7 @@ fun ReviewScreen(
 }
 
 @Composable
-private fun ReviewForm(draft: ReceiptDraft, onChange: (ReceiptDraft) -> Unit) {
+private fun ReviewForm(draft: ReceiptDraft, suggestions: Suggestions, onChange: (ReceiptDraft) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -268,19 +300,9 @@ private fun ReviewForm(draft: ReceiptDraft, onChange: (ReceiptDraft) -> Unit) {
             .padding(16.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        PaperReceipt(draft = draft, editable = true, onChange = onChange)
-        Spacer(Modifier.height(16.dp))
-        OutlinedTextField(
-            value = draft.title,
-            onValueChange = { onChange(draft.copy(title = it)) },
-            label = { Text("Title") },
-            placeholder = { Text(draft.merchantName.ifBlank { "Team lunch" }) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth(),
-        )
+        PaperReceipt(draft = draft, editable = true, onChange = onChange, suggestions = suggestions)
         Text(
-            "Tap any line on the receipt to change it.",
+            "Check the date and amount, then fill in what it was for and the company.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.widthIn(max = 560.dp).fillMaxWidth().padding(top = 8.dp),

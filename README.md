@@ -1,6 +1,6 @@
 # Receipt Scanner
 
-A personal Android app for phones and tablets. You photograph a receipt in the app and it fills in the details: merchant, date, currency, totals and every line item. You check and edit them on a paper-style copy of the receipt, give it a title, and tap the green **Save** button. All your receipts stay in your account, and you can export them to Excel.
+A personal Android app for phones and tablets that fills in the monthly Entertainment & Expense Claims form. You photograph a receipt in the app and it reads the date and amount. You add the nature of expense and the company (earlier values are one tap away), check the names, and tap the green **Save** button. Once a month you export that month's receipts to the claim form in Excel, then choose whether to delete or keep them.
 
 **Install:** open this link on your Android phone, download the APK, and allow your browser to install apps when asked:
 https://github.com/kylediaslobo/ReceiptScanner/releases/latest/download/ReceiptScanner.apk
@@ -13,10 +13,10 @@ https://github.com/kylediaslobo/ReceiptScanner/releases/latest/download/ReceiptS
 | Account, data, photos | Supabase free tier: email login, Postgres with row-level security, a private storage bucket | Free |
 | Reading receipts | The `extract-receipt` Edge Function sends the photo to Claude Haiku 5.5 and gets back JSON in a fixed shape | About $0.001–0.002 per scan |
 | Photo cleanup | Every night, pg_cron runs the `cleanup-images` Edge Function. It keeps your 15 newest photos that are under 14 days old and deletes the rest. | Free |
-| Excel export | An .xlsx file built on the phone and shared through Android's share sheet | Free |
+| Excel export | The claim form as an .xlsx, built on the phone for one month and shared through Android's share sheet | Free |
 | APK builds | GitHub Actions builds every push. A `v*` tag publishes a GitHub Release. | Free (public repo) |
 
-Lost a scan? Open **⋮ → Recent photos** and tap a photo to read it again.
+Lost a scan? Open **⋮ → Recent photos** and tap a photo to read it again. Your name for the form is under **⋮ → Your name**.
 
 ## One-time setup
 
@@ -77,4 +77,9 @@ git tag v1.0.0 && git push origin v1.0.0
 The workflow builds the APK and attaches it to a GitHub Release. The install link above always points at the newest release.
 
 ## Excel layout
-`app/src/main/java/com/kyled/receiptscanner/export/ReceiptExport.kt` holds a placeholder layout with two sheets: **Receipts** (one row per receipt) and **Line items**. Swap in your exact headers there.
+`app/src/main/java/com/kyled/receiptscanner/export/ReceiptExport.kt` copies the "dsb with formulae" sheet of the claims template:
+- Name and Month Ending
+- section A: Date, Nature of Expense, Company, Names and Amount, in Rand, with at least 18 rows, plus the sub total formula
+- section B (motor car) and the totals, speedometer, signature and authorisation blocks, left blank to fill in by hand
+
+Each CI run uploads a sample form as the `sample-claim-form` artifact.

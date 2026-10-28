@@ -114,7 +114,7 @@ fun ReceiptDetailScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(state.receipt?.title.orEmpty(), maxLines = 1) },
+                title = { Text(state.receipt?.natureOfExpense.orEmpty(), maxLines = 1) },
                 navigationIcon = {
                     if (onBack != null) {
                         IconButton(onClick = onBack) {

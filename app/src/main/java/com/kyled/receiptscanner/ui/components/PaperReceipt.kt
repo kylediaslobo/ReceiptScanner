@@ -4,6 +4,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,18 +13,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SuggestionChip
+import androidx.compose.material3.SuggestionChipDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -32,6 +35,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
@@ -39,17 +43,26 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.kyled.receiptscanner.data.DraftExtra
-import com.kyled.receiptscanner.data.DraftLine
 import com.kyled.receiptscanner.data.ReceiptDraft
-import com.kyled.receiptscanner.data.linesTotal
+import com.kyled.receiptscanner.data.formatDay
+import com.kyled.receiptscanner.data.formatRand
 import com.kyled.receiptscanner.data.toDecimalOrNull
+import com.kyled.receiptscanner.data.toLocalDateOrNull
 import com.kyled.receiptscanner.ui.theme.LocalPaperColors
 import com.kyled.receiptscanner.ui.theme.ReceiptType
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
+
+/** Values from earlier receipts, offered as one-tap chips under the prompted fields. */
+data class Suggestions(
+    val natureOfExpense: List<String> = emptyList(),
+    val company: List<String> = emptyList(),
+)
 
 /**
- * The receipt drawn as a slip of paper (design B). With [editable] every value becomes a field;
- * tapping a line opens its quantity / unit price / delete controls.
+ * The receipt drawn as a slip of paper (design B), holding one line of the expense claim form.
+ * With [editable] every value becomes a field; the date opens a calendar.
  */
 @Composable
 fun PaperReceipt(
@@ -57,9 +70,9 @@ fun PaperReceipt(
     editable: Boolean,
     onChange: (ReceiptDraft) -> Unit,
     modifier: Modifier = Modifier,
+    suggestions: Suggestions = Suggestions(),
 ) {
     val colors = LocalPaperColors.current
-    var expandedLine by remember { mutableStateOf<Long?>(null) }
 
     Column(
         modifier = modifier
@@ -69,315 +82,165 @@ fun PaperReceipt(
             .border(0.5.dp, colors.rule, RoundedCornerShape(4.dp))
             .padding(horizontal = 20.dp, vertical = 24.dp),
     ) {
-        // Header: merchant, address, date and time
-        ReceiptField(
-            value = draft.merchantName,
-            onValueChange = { onChange(draft.copy(merchantName = it)) },
-            editable = editable,
-            placeholder = "MERCHANT",
+        Text(
+            "EXPENSE CLAIM",
             style = ReceiptType.heading,
+            color = colors.ink,
             textAlign = TextAlign.Center,
-            capitalization = KeyboardCapitalization.Words,
             modifier = Modifier.fillMaxWidth(),
         )
+
+        DashedDivider()
+
+        FieldLabel("Date")
+        DateField(date = draft.date, editable = editable, onChange = { onChange(draft.copy(date = it)) })
+
+        FieldLabel("Nature of expense")
         ReceiptField(
-            value = draft.merchantAddress,
-            onValueChange = { onChange(draft.copy(merchantAddress = it)) },
+            value = draft.natureOfExpense,
+            onValueChange = { onChange(draft.copy(natureOfExpense = it)) },
             editable = editable,
-            placeholder = "Address",
-            style = ReceiptType.small.copy(color = colors.inkMuted),
-            textAlign = TextAlign.Center,
+            placeholder = "What was it for? e.g. Supper",
+            style = ReceiptType.body,
             singleLine = false,
             modifier = Modifier.fillMaxWidth(),
         )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ReceiptField(
-                value = draft.date,
-                onValueChange = { onChange(draft.copy(date = it)) },
-                editable = editable,
-                placeholder = "YYYY-MM-DD",
-                style = ReceiptType.small.copy(color = colors.inkMuted),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.width(112.dp),
-            )
-            if (editable || (draft.date.isNotBlank() && draft.time.isNotBlank())) {
-                Text(" · ", style = ReceiptType.small, color = colors.inkMuted)
-            }
-            ReceiptField(
-                value = draft.time,
-                onValueChange = { onChange(draft.copy(time = it)) },
-                editable = editable,
-                placeholder = "HH:MM",
-                style = ReceiptType.small.copy(color = colors.inkMuted),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.width(64.dp),
-            )
-        }
-
-        DashedDivider()
-
-        // Line items
-        if (draft.lines.isEmpty() && !editable) {
-            Text("No line items", style = ReceiptType.small, color = colors.inkMuted)
-        }
-        draft.lines.forEach { line ->
-            LineRow(
-                line = line,
-                editable = editable,
-                expanded = editable && expandedLine == line.key,
-                onToggle = { expandedLine = if (expandedLine == line.key) null else line.key },
-                onChange = { updated ->
-                    onChange(draft.copy(lines = draft.lines.map { if (it.key == line.key) updated else it }))
-                },
-                onDelete = {
-                    onChange(draft.copy(lines = draft.lines.filterNot { it.key == line.key }))
-                },
-            )
-        }
         if (editable) {
-            AddRowButton("+ add line") {
-                val line = DraftLine(quantity = "1")
-                expandedLine = line.key
-                onChange(draft.copy(lines = draft.lines + line))
+            SuggestionRow(draft.natureOfExpense, suggestions.natureOfExpense) {
+                onChange(draft.copy(natureOfExpense = it))
             }
         }
 
-        DashedDivider()
-
-        // Totals
-        AmountRow("Subtotal", draft.subtotal, editable) { onChange(draft.copy(subtotal = it)) }
-        AmountRow("Tax", draft.tax, editable) { onChange(draft.copy(tax = it)) }
-        AmountRow("Tip", draft.tip, editable) { onChange(draft.copy(tip = it)) }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("TOTAL", style = ReceiptType.total, color = colors.ink)
-            Spacer(Modifier.width(8.dp))
-            ReceiptField(
-                value = draft.currency,
-                onValueChange = { onChange(draft.copy(currency = it.uppercase().take(3))) },
-                editable = editable,
-                placeholder = "CUR",
-                style = ReceiptType.total.copy(color = colors.inkMuted),
-                capitalization = KeyboardCapitalization.Characters,
-                modifier = Modifier.width(52.dp),
-            )
-            Spacer(Modifier.weight(1f))
-            ReceiptField(
-                value = draft.total,
-                onValueChange = { onChange(draft.copy(total = it)) },
-                editable = editable,
-                placeholder = "0.00",
-                style = ReceiptType.total,
-                textAlign = TextAlign.End,
-                keyboardType = KeyboardType.Decimal,
-                modifier = Modifier.width(120.dp),
-            )
-        }
-        LinesTotalHint(draft)
-
-        if (editable || draft.paymentMethod.isNotBlank()) {
-            Spacer(Modifier.height(8.dp))
-            LabelValueRow("Paid by") {
-                ReceiptField(
-                    value = draft.paymentMethod,
-                    onValueChange = { onChange(draft.copy(paymentMethod = it)) },
-                    editable = editable,
-                    placeholder = "Card, cash…",
-                    style = ReceiptType.body,
-                    textAlign = TextAlign.End,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        }
-
-        // Extra fields (table number, server, receipt number…)
-        if (draft.extras.isNotEmpty() || editable) {
-            DashedDivider()
-            draft.extras.forEach { extra ->
-                ExtraRow(
-                    extra = extra,
-                    editable = editable,
-                    onChange = { updated ->
-                        onChange(draft.copy(extras = draft.extras.map { if (it.key == extra.key) updated else it }))
-                    },
-                    onDelete = { onChange(draft.copy(extras = draft.extras.filterNot { it.key == extra.key })) },
-                )
-            }
-            if (editable) {
-                AddRowButton("+ add field") { onChange(draft.copy(extras = draft.extras + DraftExtra())) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LineRow(
-    line: DraftLine,
-    editable: Boolean,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    onChange: (DraftLine) -> Unit,
-    onDelete: () -> Unit,
-) {
-    val colors = LocalPaperColors.current
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (editable) Modifier.clickable(onClick = onToggle) else Modifier)
-            .padding(vertical = 4.dp),
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            ReceiptField(
-                value = line.description,
-                onValueChange = { onChange(line.copy(description = it)) },
-                editable = expanded,
-                placeholder = "Item",
-                style = ReceiptType.body,
-                singleLine = false,
-                modifier = Modifier.weight(1f),
-            )
-            Spacer(Modifier.width(12.dp))
-            ReceiptField(
-                value = line.amount,
-                onValueChange = { onChange(line.copy(amount = it)) },
-                editable = expanded,
-                placeholder = "0.00",
-                style = ReceiptType.body,
-                textAlign = TextAlign.End,
-                keyboardType = KeyboardType.Decimal,
-                modifier = Modifier.width(96.dp),
-            )
-        }
-        val qty = line.quantity.toDecimalOrNull()
-        val showQty = (qty != null && qty.compareTo(java.math.BigDecimal.ONE) != 0) || line.unitPrice.isNotBlank()
-        if (expanded) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 2.dp)) {
-                Text("qty ", style = ReceiptType.small, color = colors.inkMuted)
-                ReceiptField(
-                    value = line.quantity,
-                    onValueChange = { onChange(line.copy(quantity = it)) },
-                    editable = true,
-                    placeholder = "1",
-                    style = ReceiptType.small,
-                    keyboardType = KeyboardType.Decimal,
-                    modifier = Modifier.width(48.dp),
-                )
-                Text("  @ ", style = ReceiptType.small, color = colors.inkMuted)
-                ReceiptField(
-                    value = line.unitPrice,
-                    onValueChange = { onChange(line.copy(unitPrice = it)) },
-                    editable = true,
-                    placeholder = "unit price",
-                    style = ReceiptType.small,
-                    keyboardType = KeyboardType.Decimal,
-                    modifier = Modifier.width(96.dp),
-                )
-                Spacer(Modifier.weight(1f))
-                IconButton(onClick = onDelete, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Outlined.Delete, contentDescription = "Remove line", tint = colors.inkMuted)
-                }
-            }
-        } else if (showQty) {
-            Text(
-                text = "  ${line.quantity.ifBlank { "1" }} x ${line.unitPrice.ifBlank { "—" }}",
-                style = ReceiptType.small,
-                color = colors.inkMuted,
-            )
-        }
-    }
-}
-
-@Composable
-private fun AmountRow(label: String, value: String, editable: Boolean, onValueChange: (String) -> Unit) {
-    if (!editable && value.isBlank()) return
-    LabelValueRow(label) {
+        FieldLabel("Company")
         ReceiptField(
-            value = value,
-            onValueChange = onValueChange,
+            value = draft.company,
+            onValueChange = { onChange(draft.copy(company = it)) },
             editable = editable,
-            placeholder = "—",
+            placeholder = "Which company? e.g. HellermannTyton",
             style = ReceiptType.body,
-            textAlign = TextAlign.End,
-            keyboardType = KeyboardType.Decimal,
+            capitalization = KeyboardCapitalization.Words,
             modifier = Modifier.fillMaxWidth(),
         )
-    }
-}
-
-@Composable
-private fun LabelValueRow(label: String, value: @Composable () -> Unit) {
-    val colors = LocalPaperColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, style = ReceiptType.body, color = colors.inkMuted, modifier = Modifier.width(96.dp))
-        Box(Modifier.weight(1f)) { value() }
-    }
-}
-
-@Composable
-private fun ExtraRow(extra: DraftExtra, editable: Boolean, onChange: (DraftExtra) -> Unit, onDelete: () -> Unit) {
-    val colors = LocalPaperColors.current
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        ReceiptField(
-            value = extra.label,
-            onValueChange = { onChange(extra.copy(label = it)) },
-            editable = editable,
-            placeholder = "Label",
-            style = ReceiptType.small.copy(color = colors.inkMuted),
-            modifier = Modifier.weight(0.4f),
-        )
-        ReceiptField(
-            value = extra.value,
-            onValueChange = { onChange(extra.copy(value = it)) },
-            editable = editable,
-            placeholder = "Value",
-            style = ReceiptType.small,
-            textAlign = TextAlign.End,
-            modifier = Modifier.weight(0.6f),
-        )
         if (editable) {
-            IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
-                Icon(Icons.Outlined.Close, contentDescription = "Remove field", tint = colors.inkMuted)
+            SuggestionRow(draft.company, suggestions.company) { onChange(draft.copy(company = it)) }
+        }
+
+        FieldLabel("Names")
+        ReceiptField(
+            value = draft.names,
+            onValueChange = { onChange(draft.copy(names = it)) },
+            editable = editable,
+            placeholder = "Who was there? e.g. Pedro/Victor",
+            style = ReceiptType.body,
+            capitalization = KeyboardCapitalization.Words,
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        DashedDivider()
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("AMOUNT", style = ReceiptType.total, color = colors.ink)
+            Spacer(Modifier.weight(1f))
+            if (editable) {
+                Text("R ", style = ReceiptType.total, color = colors.inkMuted)
+                ReceiptField(
+                    value = draft.amount,
+                    onValueChange = { onChange(draft.copy(amount = it)) },
+                    editable = true,
+                    placeholder = "0.00",
+                    style = ReceiptType.total,
+                    textAlign = TextAlign.End,
+                    keyboardType = KeyboardType.Decimal,
+                    modifier = Modifier.width(140.dp),
+                )
+            } else {
+                val amount = draft.amount.toDecimalOrNull()
+                Text(amount?.let(::formatRand) ?: draft.amount, style = ReceiptType.total, color = colors.ink)
             }
         }
     }
 }
 
 @Composable
-private fun LinesTotalHint(draft: ReceiptDraft) {
-    val sum = draft.linesTotal() ?: return
-    val total = draft.total.toDecimalOrNull()
-    if (total != null && total.compareTo(sum) == 0) return
+private fun FieldLabel(text: String) {
     Text(
-        text = "Lines add up to ${sum.setScale(2, java.math.RoundingMode.HALF_UP).toPlainString()}",
+        text.uppercase(),
         style = ReceiptType.small,
         color = LocalPaperColors.current.inkMuted,
-        textAlign = TextAlign.End,
-        modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+        modifier = Modifier.padding(top = 14.dp, bottom = 2.dp),
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddRowButton(text: String, onClick: () -> Unit) {
+private fun DateField(date: String, editable: Boolean, onChange: (String) -> Unit) {
+    val colors = LocalPaperColors.current
+    var picking by remember { mutableStateOf(false) }
+
+    val shown = if (date.isBlank()) "Tap to pick the date" else formatDay(date)
     Text(
-        text = text,
-        style = ReceiptType.small,
-        color = LocalPaperColors.current.accent,
+        text = shown,
+        style = ReceiptType.body,
+        color = if (date.isBlank()) colors.accent else colors.ink,
         modifier = Modifier
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
+            .fillMaxWidth()
+            .then(if (editable) Modifier.clickable { picking = true } else Modifier)
+            .padding(vertical = 2.dp),
     )
+
+    if (picking) {
+        // The picker works in UTC midnight millis.
+        val initial = (date.toLocalDateOrNull() ?: LocalDate.now()).toEpochDay() * MILLIS_PER_DAY
+        val state = rememberDatePickerState(initialSelectedDateMillis = initial)
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        onChange(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString())
+                    }
+                    picking = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = state)
+        }
+    }
+}
+
+private const val MILLIS_PER_DAY = 24L * 60 * 60 * 1000
+
+/** Earlier values that match what's typed so far. Hidden once the field holds one exactly. */
+@Composable
+private fun SuggestionRow(current: String, options: List<String>, onPick: (String) -> Unit) {
+    val typed = current.trim()
+    if (options.any { it.equals(typed, ignoreCase = true) }) return
+    val matches = options.filter { typed.isEmpty() || it.contains(typed, ignoreCase = true) }.take(8)
+    if (matches.isEmpty()) return
+
+    val colors = LocalPaperColors.current
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(top = 4.dp),
+    ) {
+        matches.forEach { option ->
+            SuggestionChip(
+                onClick = { onPick(option) },
+                label = { Text(option, style = ReceiptType.small) },
+                colors = SuggestionChipDefaults.suggestionChipColors(
+                    containerColor = Color.Transparent,
+                    labelColor = colors.accent,
+                ),
+                border = SuggestionChipDefaults.suggestionChipBorder(enabled = true, borderColor = colors.rule),
+            )
+        }
+    }
 }
 
 @Composable
@@ -415,7 +278,7 @@ fun ReceiptField(
 ) {
     val colors = LocalPaperColors.current
     val textStyle = style.copy(
-        color = if (style.color.isUnspecifiedColor()) colors.ink else style.color,
+        color = if (style.color == Color.Unspecified) colors.ink else style.color,
         textAlign = textAlign,
     )
     if (!editable) {
@@ -435,7 +298,8 @@ fun ReceiptField(
                 if (value.isEmpty()) {
                     Text(
                         placeholder,
-                        style = textStyle.copy(color = colors.inkMuted.copy(alpha = 0.6f)),
+                        // Empty prompted fields read in the accent colour so they stand out as "fill me in".
+                        style = textStyle.copy(color = colors.accent.copy(alpha = 0.75f)),
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
@@ -444,6 +308,3 @@ fun ReceiptField(
         },
     )
 }
-
-private fun androidx.compose.ui.graphics.Color.isUnspecifiedColor() =
-    this == androidx.compose.ui.graphics.Color.Unspecified
