@@ -20,7 +20,8 @@ else
   echo "No keystore at $SIGNING_DIR/release.jks; skipping signing secrets." >&2
 fi
 
-if [ -f "$PROPS" ] && [ -n "$(prop SUPABASE_URL "$PROPS")" ]; then
+url="$( [ -f "$PROPS" ] && prop SUPABASE_URL "$PROPS" || true )"
+if [ -n "$url" ] && [[ "$url" != *YOUR* ]]; then
   prop SUPABASE_URL "$PROPS" | gh secret set SUPABASE_URL -R "$REPO"
   prop SUPABASE_ANON_KEY "$PROPS" | gh secret set SUPABASE_ANON_KEY -R "$REPO"
   echo "Supabase secrets set."
