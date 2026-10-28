@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A paper receipt with a torn (zig-zag) bottom edge and printed lines. 108dp canvas, 72dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFDF8"
+        android:pathData="M38,30 L70,30 L70,76 L66,72 L62,76 L58,72 L54,76 L50,72 L46,76 L42,72 L38,76 Z" />
+    <path
+        android:fillColor="#3B6D11"
+        android:pathData="M43,38 L65,38 L65,41 L43,41 Z M43,46 L59,46 L59,49 L43,49 Z M43,54 L62,54 L62,57 L43,57 Z M43,62 L65,62 L65,65 L43,65 Z" />
+</vector>

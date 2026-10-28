@@ -1,15 +1,80 @@
 # Receipt Scanner
 
-A personal Android app for phones and tablets. You photograph a receipt in the app, it pulls out the details, you check them, and you save the receipt to your account. You can also export receipts to Excel.
+A personal Android app for phones and tablets. You photograph a receipt in the app and it fills in the details: merchant, date, currency, totals and every line item. You check and edit them on a paper-style copy of the receipt, give it a title, and tap the green **Save** button. All your receipts stay in your account, and you can export them to Excel.
 
-## Stack
-- **App:** Kotlin, Jetpack Compose and CameraX. It's installed by sideloading an APK.
-- **Backend:** Supabase free tier, which provides auth, Postgres, Storage, Edge Functions and Cron.
-- **Extraction:** a Supabase Edge Function calls Claude Haiku with vision.
+**Install:** open this link on your Android phone, download the APK, and allow your browser to install apps when asked:
+https://github.com/kylediaslobo/ReceiptScanner/releases/latest/download/ReceiptScanner.apk
 
-## Setup
-1. Open the project in Android Studio and let Gradle sync.
-2. Copy `local.properties.example` to `local.properties` and fill in your Supabase URL and anon key.
-3. Copy `supabase/functions/.env.example` to `supabase/functions/.env` and add your Anthropic API key.
+## How it fits together
 
-Never commit `local.properties`, `.env` or the signing keystore. `.gitignore` already excludes them.
+| Part | What it uses | Cost |
+|---|---|---|
+| App | Kotlin, Jetpack Compose, CameraX (in-app camera). On wide screens, the list and a receipt show side by side. | Free |
+| Account, data, photos | Supabase free tier: email login, Postgres with row-level security, a private storage bucket | Free |
+| Reading receipts | The `extract-receipt` Edge Function sends the photo to Claude Haiku 5.5 and gets back JSON in a fixed shape | About $0.001–0.002 per scan |
+| Photo cleanup | Every night, pg_cron runs the `cleanup-images` Edge Function. It keeps your 15 newest photos that are under 14 days old and deletes the rest. | Free |
+| Excel export | An .xlsx file built on the phone and shared through Android's share sheet | Free |
+| APK builds | GitHub Actions builds every push. A `v*` tag publishes a GitHub Release. | Free (public repo) |
+
+Lost a scan? Open **⋮ → Recent photos** and tap a photo to read it again.
+
+## One-time setup
+
+### 1. Supabase project
+1. Create a free project at supabase.com.
+2. **Authentication → Users → Add user**: create your own account.
+3. **Authentication → Sign In / Providers**: turn off **Allow new users to sign up**. Anyone with the APK has your anon key, so this stops strangers from signing up.
+4. Copy `local.properties.example` to `local.properties` and fill in `SUPABASE_URL` and `SUPABASE_ANON_KEY` from **Project Settings → API**.
+
+### 2. Database, functions and secrets
+Run these from the repo root. `login` and `link` ask you questions in the terminal.
+
+```bash
+npx supabase@2.122.0 login
+```
+
+```bash
+npx supabase@2.122.0 link --project-ref YOUR-PROJECT-REF
+```
+
+```bash
+npx supabase@2.122.0 db push
+```
+
+1. Copy `supabase/functions/.env.example` to `supabase/functions/.env`.
+2. Fill in your Anthropic API key and a long random `CLEANUP_SECRET`.
+3. Upload the secrets and deploy both functions:
+
+```bash
+npx supabase@2.122.0 secrets set --env-file supabase/functions/.env
+```
+
+```bash
+npx supabase@2.122.0 functions deploy
+```
+
+### 3. Image cleanup schedule
+The nightly job reads two values from Supabase Vault. In the dashboard **SQL Editor**, run the following once. Use your own URL and the same `CLEANUP_SECRET` as in `.env`:
+
+```sql
+select vault.create_secret('https://YOUR-PROJECT-REF.supabase.co', 'project_url');
+select vault.create_secret('YOUR-CLEANUP-SECRET', 'cleanup_secret');
+```
+
+### 4. GitHub build secrets
+The APK signing key lives in `~/.receipt-scanner-signing/`, outside the repo. **Back up that folder.** Every update has to be signed with the same key, or Android won't install it over the existing app.
+
+```bash
+bash scripts/set-github-secrets.sh
+```
+
+### 5. Publish a version
+
+```bash
+git tag v1.0.0 && git push origin v1.0.0
+```
+
+The workflow builds the APK and attaches it to a GitHub Release. The install link above always points at the newest release.
+
+## Excel layout
+`app/src/main/java/com/kyled/receiptscanner/export/ReceiptExport.kt` holds a placeholder layout with two sheets: **Receipts** (one row per receipt) and **Line items**. Swap in your exact headers there.

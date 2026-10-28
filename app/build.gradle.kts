@@ -7,11 +7,14 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
-// Supabase URL + anon key live in local.properties (git-ignored), never in source.
+// Supabase URL + anon key: local.properties when building on a PC, environment variables in CI.
+// Neither is committed to the repo.
 val localProps = Properties().apply {
     val f = rootProject.file("local.properties")
     if (f.exists()) f.inputStream().use { load(it) }
 }
+
+fun config(name: String): String? = localProps.getProperty(name) ?: System.getenv(name)
 
 android {
     namespace = "com.kyled.receiptscanner"
@@ -21,19 +24,33 @@ android {
         applicationId = "com.kyled.receiptscanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = config("VERSION_CODE")?.toIntOrNull() ?: 1
+        versionName = config("VERSION_NAME") ?: "0.1.0-dev"
 
-        buildConfigField("String", "SUPABASE_URL", "\"${localProps.getProperty("SUPABASE_URL", "")}\"")
-        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${localProps.getProperty("SUPABASE_ANON_KEY", "")}\"")
+        buildConfigField("String", "SUPABASE_URL", "\"${config("SUPABASE_URL").orEmpty()}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${config("SUPABASE_ANON_KEY").orEmpty()}\"")
+    }
+
+    // Release signing comes from a keystore file + passwords (GitHub Actions secrets in CI).
+    // Every release must use the same keystore, or Android refuses to install it as an update.
+    val keystorePath = config("RELEASE_KEYSTORE_PATH")
+    signingConfigs {
+        if (keystorePath != null) {
+            create("release") {
+                storeFile = file(keystorePath)
+                storePassword = config("RELEASE_KEYSTORE_PASSWORD")
+                keyAlias = config("RELEASE_KEY_ALIAS")
+                keyPassword = config("RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = true
-            isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Signing config gets added in the "build & distribute APK" stage.
+            // Shrinking is off: the APK is a bit bigger, but it avoids R8 keep-rule surprises
+            // with Ktor/supabase-kt reflection in a personal app.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 
@@ -47,6 +64,9 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+    lint {
+        checkReleaseBuilds = false
     }
 }
 
